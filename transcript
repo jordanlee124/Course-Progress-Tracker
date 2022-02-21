@@ -1,0 +1,101 @@
+#!/usr/bin/python3
+# print a transcript for a given student
+
+import sys
+import psycopg2
+import re
+from helpers import getStudent
+
+### set up some globals
+
+usage = f"Usage: {sys.argv[0]} zID"
+db = None
+query = """
+select subject_code, term, subject_name, mark, grade, subject_uoc
+from trans_help
+where person_id = %s and given = %s and family = %s
+;
+"""
+
+### process command-line args
+
+argc = len(sys.argv)
+if argc < 2:
+  print(usage)
+  exit(1)
+zid = sys.argv[1]
+if zid[0] == 'z':
+  zid = zid[1:8]
+digits = re.compile("^\d{7}$")
+if not digits.match(zid):
+  print(f"Invalid student ID {zid}")
+  exit(1)
+
+# manipulate database
+
+try:
+  db = psycopg2.connect("dbname=mymyunsw")
+  stuInfo = getStudent(db,zid)
+  if not stuInfo:
+    print(f"Invalid student ID {zid}")
+    exit()
+
+  # print(stuInfo) # debug
+  # Print transcript for Student
+  
+  cur = db.cursor()
+  cur.execute(query, [stuInfo[0], stuInfo[2], stuInfo[1]])
+  fetch = cur.fetchall()
+
+  total_attempted_uoc = 0
+  weighted_mark_sum = 0
+  total_achieved_uoc = 0
+
+  print(f"{stuInfo[0]} {stuInfo[1]}, {stuInfo[2]}")
+
+  for enrolment in fetch:
+    
+    CourseCode, Term, SubjectTitle, Mark, Grade, UOC = enrolment
+    display_UOC = None
+    display_mark = None
+
+    # Handle what UOC to display
+    if Grade in ["AF","FL","UF"]:
+      display_UOC = "fail"
+    elif Grade in ['AS','AW','PW','RD','NF','LE','PE','WD','WJ']:
+      display_UOC = ""
+    else: 
+      display_UOC = UOC
+
+    # Handle what Mark to display
+    if Grade in ['HD','DN','CR','PS','FL','UF']:
+      display_mark = Mark
+    else: 
+      display_mark = "-"
+
+    if Grade in ['HD','DN','CR','PS','AF','FL','UF']:
+      total_attempted_uoc += UOC
+
+    if Grade in ['A','B','C','D','HD','DN','CR','PS','XE','T','SY','EC','NC']:
+      total_achieved_uoc += UOC 
+    
+    if isinstance(Mark, int):
+      weighted_mark_sum += Mark * UOC
+
+    if isinstance(display_UOC, int):
+      print(f"{CourseCode} {Term} {SubjectTitle:<32s}{display_mark:>3} {Grade:2s}  {display_UOC:2d}uoc")
+    elif display_UOC == "":
+      print(f"{CourseCode} {Term} {SubjectTitle:<32s}{display_mark:>3} {Grade:2s}")
+    else: 
+      print(f"{CourseCode} {Term} {SubjectTitle:<32s}{display_mark:>3} {Grade:2s}   {display_UOC}")
+
+  
+  print(f"UOC = {total_achieved_uoc}, WAM = {weighted_mark_sum/total_attempted_uoc:.1f}")
+  cur.close()
+
+except Exception as err:
+  print("DB error: ", err)
+finally:
+  if db:
+    db.close()
+

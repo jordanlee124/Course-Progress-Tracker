@@ -1,0 +1,326 @@
+#!/usr/bin/python3
+#print list of rules for a program or stream
+
+import sys
+import psycopg2
+import re
+from helpers import getProgram, getStream, getSubject, get_req, getRuleType
+
+### set up some globals
+
+usage = f"Usage: {sys.argv[0]} (ProgramCode|StreamCode)"
+db = None
+
+query1 = """
+select program_name, orgunits_name, rule_name, aog_def, aog_type, aog_defby
+from rules_1
+where program_id = %s
+;
+"""
+
+query2 = """
+select stream_code, stream_name, orgunits_name, rule_name, rule_type, min_req, max_req, rule_aogroup, aog_type, aoq_defby, aog_def 
+from rules_2
+where stream_code = %s
+;
+"""
+
+### process command-line args
+
+argc = len(sys.argv)
+if argc < 2:
+  print(usage)
+  exit(1)
+code = sys.argv[1]
+if len(code) == 4:
+  codeOf = "program"
+elif len(code) == 6:
+  codeOf = "stream"
+
+try:
+  db = psycopg2.connect("dbname=mymyunsw")
+  if codeOf == "program":
+    progInfo = getProgram(db,code)
+    if not progInfo:
+      print(f"Invalid program code {code}")
+      exit()
+    # print(progInfo)  #debug
+    # List the rules for Program
+
+    Id, Code, Name, UOC, OfferedBy, Career, Duration, Description = progInfo
+
+    cur = db.cursor()
+    cur.execute(query1,[Id])
+
+    fetch = cur.fetchall()
+
+    print(f"{Id:4d} {Name}, {UOC} UOC, {Duration/12:.1f} years")
+    print(f"- offered by {fetch[0][1]}")
+    print("Academic Requirements:")
+
+    for rule in fetch:
+      rule_type = getRuleType(db, rule[2])[0]
+      rule_req = get_req(db, rule[2])
+
+      if rule_type == "DS":
+        print(f"{rule_req[0]} stream(s) from {rule[2]}")
+        def_list = rule[3].split(',')
+
+        for string in def_list:
+          sInfo = getStream(db, string)
+
+          if sInfo == None:
+            print(f"- {string} ???")
+
+          else: 
+            print(f"- {string} {sInfo[2]}")
+
+      elif rule_type == "CC":
+        def_list = rule[3].split(',')
+
+        if len(def_list) == 1:
+          print(f"{rule[2]}")
+          
+          if re.match('{.*}', rule[3]):
+            s = rule[3].translate({ord(i): None for i in '{ }'})
+            s = s.split(';')
+            print(f"- {s[0]} {getSubject(db, s[0])[2]}")  
+            print(f"  or {s[1]} {getSubject(db, s[1])[2]}") 
+
+          else:            
+            print(f"- {rule[3]} {getSubject(db,rule[3])[2]}")
+
+        else:
+          print(f"all courses from {rule[2]}")
+          def_list = rule[3].split(',')
+
+          for string in def_list:
+            if re.match('{.*}', string):
+              s = string.translate({ord(i): None for i in '{ }'})
+              s = s.split(';')
+              print(f"- {s[0]} {getSubject(db, s[0])[2]}")  
+              print(f"  or {s[1]} {getSubject(db, s[1])[2]}")  
+
+            else:
+              sInfo = getSubject(db, string)
+              print(f"- {sInfo[1]} {sInfo[2]}")
+
+      elif rule_type == "PE":
+        if rule_req[0] == rule_req[1]:
+          print(f"{rule_req[0]} UOC courses from {rule[2]}")
+          def_list = rule[3].split(',')
+
+          if rule[5] == 'enumerated':
+            for string in def_list:
+              if re.match('{.*}', string):
+                s = string.translate({ord(i): None for i in '{ }'})
+                s = s.split(';')
+                print(f"- {s[0]} {getSubject(db, s[0])[2]}")  
+
+                if getSubject(db, s[1]) != None:
+                  print(f"  or {s[1]} {getSubject(db, s[1])[2]}") 
+
+                else:   
+                  print(f"  or {s[1]} {s[1]}")  
+
+              else:
+                sInfo = getSubject(db, string)
+
+                if sInfo == None:
+                  print(f"- {string} ???")
+
+                else: 
+                  print(f"- {string} {sInfo[2]}")
+          else:
+            print(f"- courses matching {rule[3]}")
+
+        elif rule_req[0] == None and rule_req[1] != None:
+          print(f"up to {rule_req[1]} UOC courses from {rule[2]}")
+
+          if rule[9] == 'pattern':
+            print(f"- courses matching {rule[3]}")
+        
+        elif rule_req[0] != None and rule_req[1] == None:
+          print(f"at least {rule_req[0]} UOC courses from {rule[2]}")
+
+          if rule[5] == 'pattern':
+            print(f"- courses matching {rule[3]}")
+
+        else:
+          print(f"between {rule_req[0]} and {rule_req[1]} UOC courses from {rule[3]}")
+          def_list = rule[10].split(',')
+
+          for string in def_list:
+            sInfo = getSubject(db, string)
+
+            if sInfo == None:
+              print(f"- {string} ???")
+
+            else: 
+              print(f"- {string} {sInfo[2]}")
+
+      elif rule_type == "FE":
+        if rule_req[0] == rule_req[1]:
+          print(f"{rule_req[0]} UOC of Free Electives")
+
+        elif rule_req[0] == None and rule_req[1] != None:
+          print(f"up to {rule[1]} UOC courses of Free Electives")
+
+        elif rule_req[0] != None and rule_req[1] == None:
+          print(f"at least {rule_req[0]} UOC of Free Electives")
+
+      elif rule_type == "GE":
+        print(f"12 UOC of General Education")
+    cur.close()
+
+              
+  ######################################### INPUT IS OF STREAM ########################################
+  elif codeOf == "stream":
+    strmInfo = getStream(db,code)
+    if not strmInfo:
+      print(f"Invalid stream code {code}")
+      exit()
+    # print(strmInfo)  #debug
+    # List the rules for Stream
+    Id, Code, Name, OfferedBy, Type, Description = strmInfo
+
+    cur = db.cursor()
+    cur.execute(query2,[Code])
+
+    fetch = cur.fetchall()
+
+    print(f"{Code} {Name}")
+    print(f"- offered by {fetch[0][2]}")
+    print("Academic Requirements:")
+
+    for rule in fetch:
+      rule_type = getRuleType(db, rule[3])[0]
+      rule_req = get_req(db, rule[2])
+
+      if rule_type == "DS":
+        print(f"{rule_req[0]} stream(s) from {rule[2]}")
+        def_list = rule[3].split(',')
+
+        for string in def_list:
+          sInfo = getStream(db, string)
+
+          if sInfo == None:
+            print(f"- {string} ???")
+
+          else: 
+            print(f"- {string} {sInfo[2]}")
+
+      elif rule_type == "CC":
+        def_list = rule[10].split(',')
+
+        if len(def_list) == 1:
+          print(f"{rule[3]}")
+        
+          if re.match('{.*}', rule[10]):
+            s = rule[10].translate({ord(i): None for i in '{ }'})
+            s = s.split(';')
+            print(f"- {s[0]} {getSubject(db, s[0])[2]}")  
+            print(f"  or {s[1]} {getSubject(db, s[1])[2]}")
+
+          else:
+            print(f"- {rule[10]} {getSubject(db,rule[10])[2]}")
+
+        else:
+          print(f"all courses from {rule[2]}")
+          def_list = rule[10].split(',')
+
+          for string in def_list:
+            if re.match('{.*}', string):
+              s = string.translate({ord(i): None for i in '{ }'})
+              s = s.split(';')
+              print(f"- {s[0]} {getSubject(db, s[0])[2]}")  
+
+              if getSubject(db, s[1]) != None:
+                print(f"  or {s[1]} {getSubject(db, s[1])[2]}") 
+
+              else:   
+                print(f"  or {s[1]} {s[1]}") 
+
+            else:
+              sInfo = getSubject(db, string)
+              print(f"- {sInfo[1]} {sInfo[2]}")
+
+      elif rule_type == "PE":
+        rule_req = get_req(db, rule[3])
+
+        if rule_req[0] == rule_req[1]:
+          print(f"{rule_req[0]} UOC courses from {rule[3]}")
+          def_list = rule[10].split(',')
+
+          if rule[9] == 'enumerated':
+            for string in def_list:
+              if re.match('{.*}', string):
+                s = string.translate({ord(i): None for i in '{ }'})
+                s = s.split(';')
+                print(f"- {s[0]} {getSubject(db, s[0])[2]}")  
+
+                if getSubject(db, s[1]) != None:
+                  print(f"  or {s[1]} {getSubject(db, s[1])[2]}")     
+
+                else:   
+                  print(f"  or {s[1]} {s[1]}")     
+
+              else:
+                sInfo = getSubject(db, string)
+
+                if sInfo == None:
+                  print(f"- {string} ???")
+
+
+                else: 
+                  print(f"- {string} {sInfo[2]}")
+
+          else:
+            print(f"- courses matching {rule[10]}")
+
+        elif rule_req[0] == None and rule_req[1] != None:
+          print(f"up to {rule_req[1]} UOC courses from {rule[3]}")
+
+          if rule[9] == 'pattern':
+            print(f"- courses matching {rule[10]}")
+        
+        elif rule_req[0] != None and rule_req[1] == None:
+          print(f"at least {rule_req[0]} UOC courses from {rule[3]}")
+
+          if rule[9] == 'pattern':
+            print(f"- courses matching {rule[10]}")
+
+        else:
+          print(f"between {rule_req[0]} and {rule_req[1]} UOC courses from {rule[3]}")
+          def_list = rule[10].split(',')
+
+          for string in def_list:
+            sInfo = getSubject(db, string)
+
+            if sInfo == None:
+              print(f"- {string} ???")
+
+            else: 
+              print(f"- {string} {sInfo[2]}")
+
+      elif rule_type == "FE":
+        rule_req = get_req(db, rule[3])
+
+        if rule_req[0] == rule_req[1]:
+          print(f"{rule_req[0]} UOC of Free Electives")
+
+        elif rule_req[0] == None and rule_req[1] != None:
+          print(f"up to {rule[1]} UOC courses of Free Electives")
+
+        elif rule_req[0] != None and rule_req[1] == None:
+          print(f"at least {rule_req[0]} UOC of Free Electives")
+
+      elif rule_type == "GE":
+        print(f"12 UOC of General Education")
+    cur.close()
+
+except Exception as err:
+  print(err)
+finally:
+  if db:
+    db.close()

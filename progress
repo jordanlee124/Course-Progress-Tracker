@@ -1,0 +1,605 @@
+#!/usr/bin/python3
+# progression check for a given student
+
+import sys
+import psycopg2
+import re
+from helpers import getStudent, getProgram, getStream, getSubject
+
+def getEnrolmentInfo(db, id):
+  cur = db.cursor()
+  qry = """
+  select p.id, p.fullname, pro.name as program_name, pro.code as program_code, se.stream as stream_id, s.name as stream_name, s.code as stream_code
+  from people p
+  join program_enrolments pe on (p.id = pe.student)
+  join programs pro on (pe.program = pro.id)
+  join stream_enrolments se on (pe.id = se.partof)
+  join streams s on (se.stream = s.id)
+  where p.id = %s
+  group by p.id, pro.name, pro.code, se.stream, s.name, s.code
+  """
+  cur.execute(qry,[id])
+  info = cur.fetchone()
+  cur.close()
+  if not info:
+    return None
+  else:
+    return info
+
+def getProgRule(db, id, code, UOC):
+  cur = db.cursor()
+  qry = """
+  select p.id, r.name, r.type, aog.defby, aog.definition, r.max_req
+  from people p
+  join program_enrolments pe on (p.id = pe.student)
+  join programs pro on (pe.program = pro.id)
+  join program_rules pr on (pe.program = pr.program)
+  join rules r on (pr.rule = r.id)
+  join academic_object_groups aog on (r.ao_group = aog.id)
+  where aog.definition ~* %s and p.id = %s
+  group by p.id, r.name, r.type, aog.defby, aog.definition, r.max_req
+  ; 
+  """
+  cur.execute(qry, [code, id])
+
+  info = cur.fetchone()
+  cur.close()
+  if info:
+    id, name, r_type, defby, defin, max = info
+    if max != None and UOC != None and name in UOC and UOC[name] == max:
+      return None
+  
+  if not info:
+    return None
+  else:
+    return info
+  
+def getProgRule2(db, code, p_code, UOC):
+  cur = db.cursor()
+  qry = """
+  select p.id, r.name, r.type, aog.defby, aog.definition, r.max_req
+  from people p
+  join program_enrolments pe on (p.id = pe.student)
+  join programs pro on (pe.program = pro.id)
+  join program_rules pr on (pe.program = pr.program)
+  join rules r on (pr.rule = r.id)
+  join academic_object_groups aog on (r.ao_group = aog.id)
+  where aog.definition ~* %s and pro.code = %s
+  group by p.id, r.name, r.type, aog.defby, aog.definition, r.max_req
+  ; 
+  """
+  cur.execute(qry, [code, p_code])
+
+  info = cur.fetchone()
+  cur.close()
+  if info:
+    id, name, r_type, defby, defin, max = info
+    if max != None and UOC != None and name in UOC and UOC[name] == max:
+      return None
+  
+  if not info:
+    return None
+  else:
+    return info
+
+
+def getStreamRule(db, id, code, UOC):
+  cur = db.cursor()
+  qry = """
+  select p.id, r.name, r.type, aog.defby, aog.definition, r.max_req
+  from people p
+  join program_enrolments pe on (p.id = pe.student)
+  join stream_enrolments se on (pe.id = se.partof)
+  join streams s on (se.stream = s.id)
+  join stream_rules sr on (se.stream = sr.stream)
+  join rules r on (sr.rule = r.id)
+  join academic_object_groups aog on (r.ao_group = aog.id)
+  where p.id = %s
+  group by  p.id, r.name, r.type, aog.defby, aog.definition, r.max_req
+  ; 
+  """
+  cur.execute(qry, [id])
+
+  info = cur.fetchall()
+  cur.close()
+  
+  progRule = getProgRule(db, id, code, None)
+
+  if not info: 
+    return None
+  for tup in info:
+    p_id, name, r_type, defby, defin, max = tup
+    if max != None and name in UOC and UOC[name] == max:
+      continue
+    if progRule:
+      if progRule[2] == 'CC':
+        return None
+      if defby == 'enumerated' and re.match('.*'+code+'.*', defin):
+        return tup
+      elif defby == 'pattern':
+        defList = defin.split(',')
+        for d in defList:
+          if '#' in d:
+            d = d.translate({ord(i): None for i in '#'})
+            if re.match(d, code):
+              return tup
+          else:
+            if re.match(d, code):
+              return tup
+    else: 
+      if defby == 'enumerated' and re.match('.*'+code+'.*', defin):
+        return tup
+      elif defby == 'pattern':
+        defList = defin.split(',')
+        for d in defList:
+          if '#' in d:
+            d = d.translate({ord(i): None for i in '#'})
+            if re.match(d, code):
+              return tup
+          else:
+            if re.match(d, code):
+              return tup
+
+def getStreamRule2(db, s_code, p_code, code, UOC):
+  cur = db.cursor()
+  qry = """
+  select pe.program, r.name, r.type, aog.defby, aog.definition, r.max_req
+  from program_enrolments pe
+  join stream_enrolments se on (pe.id = se.partof)
+  join streams s on (se.stream = s.id)
+  join stream_rules sr on (se.stream = sr.stream)
+  join rules r on (sr.rule = r.id)
+  join academic_object_groups aog on (r.ao_group = aog.id)
+  where s.code = %s
+  group by pe.program, r.name, r.type, aog.defby, aog.definition, r.max_req
+  order by r.type
+  ; 
+  """
+  cur.execute(qry, [s_code])
+
+  info = cur.fetchall()
+  cur.close()
+  
+  progRule = getProgRule2(db, p_code, code, None)
+
+  if not info: 
+    return None
+  for tup in info:
+    p_id, name, r_type, defby, defin, max = tup
+    if max != None and name in UOC and UOC[name] == max:
+      continue
+    if progRule:
+      if progRule[2] == 'CC':
+        return None
+      if defby == 'enumerated' and re.match('.*'+code+'.*', defin):
+        return tup
+      elif defby == 'pattern':
+        defList = defin.split(',')
+        for d in defList:
+          if '#' in d:
+            d = d.translate({ord(i): None for i in '#'})
+            if re.match(d, code):
+              return tup
+          else:
+            if re.match(d, code):
+              return tup
+    else: 
+      if defby == 'enumerated' and re.match('.*'+code+'.*', defin):
+        return tup
+      elif defby == 'pattern':
+        defList = defin.split(',')
+        for d in defList:
+          if '#' in d:
+            d = d.translate({ord(i): None for i in '#'})
+            if re.match(d, code):
+              return tup
+          else:
+            if re.match(d, code):
+              return tup
+
+def checkFreeElective(db, id):
+  cur = db.cursor()
+  qry = """
+  select r.name, r.min_req, r.max_req
+  from people p
+  join program_enrolments pe on (p.id = pe.student)
+  join stream_enrolments se on (pe.id = se.partof)
+  join streams s on (se.stream = s.id)
+  join stream_rules sr on (se.stream = sr.stream)
+  join rules r on (sr.rule = r.id)
+  where p.id = %s
+  group by r.name, r.min_req, r.max_req
+  ; 
+  """
+  cur.execute(qry, [id])
+  info = cur.fetchall()
+  cur.close()
+  if not info:
+    return None
+  else:
+    for tup in info:
+      name, min, max = tup
+      if re.match('.*Free Electives', name):
+        return tup
+    return None
+  
+def checkFreeElective2(db, s_code):
+  cur = db.cursor()
+  qry = """
+  select r.name, r.min_req, r.max_req
+  from program_enrolments pe 
+  join stream_enrolments se on (pe.id = se.partof)
+  join streams s on (se.stream = s.id)
+  join stream_rules sr on (se.stream = sr.stream)
+  join rules r on (sr.rule = r.id)
+  where s.code = %s
+  group by r.name, r.min_req, r.max_req
+  ; 
+  """
+  cur.execute(qry, [s_code])
+  info = cur.fetchall()
+  cur.close()
+  if not info:
+    return None
+  else:
+    for tup in info:
+      name, min, max = tup
+      if re.match('.*Free Electives', name):
+        return tup
+    return None
+
+def checkGenEd(db, id):
+  cur = db.cursor()
+  qry = """
+  select r.name, r.min_req, r.max_req
+  from people p
+  join program_enrolments pe on (p.id = pe.student)
+  join stream_enrolments se on (pe.id = se.partof)
+  join streams s on (se.stream = s.id)
+  join stream_rules sr on (se.stream = sr.stream)
+  join rules r on (sr.rule = r.id)
+  where p.id = %s
+  group by r.name, r.min_req, r.max_req
+  ; 
+  """
+  cur.execute(qry, [id])
+  info = cur.fetchall()
+  cur.close()
+  if not info:
+    return None
+  else:
+    for tup in info:
+      name, min, max = tup
+      if re.match('.*General Education', name):
+        return tup
+    return None
+  
+def getStreamRulesFromType(db, id, r_type):
+  cur = db.cursor()
+  qry = """
+  select p.id, p.fullname, s.name, r.name, r.type, r.min_req, r.max_req, aog.definition, r.id
+  from people p
+  join program_enrolments pe on (p.id = pe.student)
+  join stream_enrolments se on (pe.id = se.partof)
+  join streams s on (se.stream = s.id)
+  join stream_rules sr on (se.stream = sr.stream)
+  join rules r on (sr.rule = r.id)
+  join academic_object_groups aog on (r.ao_group = aog.id)
+  where p.id = %s and r.type = %s
+  group by p.id, p.fullname, s.name, r.name, r.type, r.min_req, r.max_req, aog.definition, r.id
+  order by r.id
+  ;
+  """
+  cur.execute(qry,[id, r_type])
+ 
+  info = cur.fetchall()
+  cur.close()
+  if not info:
+    return None
+  else:
+    return info
+  
+def getStreamRulesFromType2(db, s_code, r_type):
+  cur = db.cursor()
+  qry = """
+  select s.id, s.code, s.name, r.name, r.type, r.min_req, r.max_req, aog.definition, r.id
+  from people p
+  join program_enrolments pe on (p.id = pe.student)
+  join stream_enrolments se on (pe.id = se.partof)
+  join streams s on (se.stream = s.id)
+  join stream_rules sr on (se.stream = sr.stream)
+  join rules r on (sr.rule = r.id)
+  join academic_object_groups aog on (r.ao_group = aog.id)
+  where s.code = %s and r.type = %s
+  group by s.id, s.code, s.name, r.name, r.type, r.min_req, r.max_req, aog.definition, r.id
+  order by r.id
+  ;
+  """
+  cur.execute(qry,[s_code, r_type])
+ 
+  info = cur.fetchall()
+  cur.close()
+  if not info:
+    return None
+  else:
+    return info
+  
+def getProgramRulesFromType(db, id, r_type):
+  cur = db.cursor()
+  qry = """
+  select p.id, p.fullname, pro.name, r.name, r.type, r.min_req, r.max_req, aog.definition, r.id
+  from people p
+  join program_enrolments pe on (p.id = pe.student)
+  join programs pro on (pe.program = pro.id)
+  join program_rules pr on (pe.program = pr.program)
+  join rules r on (pr.rule = r.id)
+  join academic_object_groups aog on (r.ao_group = aog.id)
+  where p.id = %s and r.type = %s
+  group by p.id, p.fullname, pro.name, r.name, r.type, r.min_req, r.max_req, aog.definition, r.id
+  order by r.id
+  ;
+  """
+  cur.execute(qry,[id, r_type])
+  info = cur.fetchall()
+  cur.close()
+  if not info:
+    return None
+  else:
+    return info
+  
+def getProgramRulesFromType2(db, p_code, r_type):
+  cur = db.cursor()
+  qry = """
+  select pro.id, pro.code, pro.name, r.name, r.type, r.min_req, r.max_req, aog.definition, r.id
+  from program_enrolments pe
+  join programs pro on (pe.program = pro.id)
+  join program_rules pr on (pe.program = pr.program)
+  join rules r on (pr.rule = r.id)
+  join academic_object_groups aog on (r.ao_group = aog.id)
+  where pro.code = %s and r.type = %s
+  group by pro.id, pro.code, pro.name, r.name, r.type, r.min_req, r.max_req, aog.definition, r.id
+  order by r.id
+  ;
+  """
+  cur.execute(qry,[p_code, r_type])
+  info = cur.fetchall()
+  cur.close()
+  if not info:
+    return None
+  else:
+    return info
+    
+
+
+usage = f"Usage: {sys.argv[0]} zID [Program Stream]"
+db = None
+
+query1 = """
+select sub_code, term, sub_name, mark, grade, uoc
+from prog2
+where zid = %s
+;
+"""
+### process command-line args
+
+argc = len(sys.argv)
+if argc < 2:
+  print(usage)
+  exit(1)
+zid = sys.argv[1]
+if zid[0] == 'z':
+  zid = zid[1:8]
+digits = re.compile("^\d{7}$")
+if not digits.match(zid):
+  print("Invalid student ID")
+  exit(1)
+
+progCode = None
+strmCode = None
+
+if argc == 4:
+  progCode = sys.argv[2]
+  strmCode = sys.argv[3]
+
+# manipulate database
+
+try:
+  db = psycopg2.connect("dbname=mymyunsw")
+  stuInfo = getStudent(db,zid)
+  if not stuInfo:
+    print(f"Invalid student id {zid}")
+    exit()
+
+  if progCode:
+    progInfo = getProgram(db,progCode)
+    if not progInfo:
+      print(f"Invalid program code {progCode}")
+      exit()
+
+  if strmCode:
+    strmInfo = getStream(db,strmCode)
+    if not strmInfo:
+      print(f"Invalid program code {strmCode}")
+      exit()
+
+  # if have a program/stream
+  #   show progression check on supplied program/stream
+  # else
+  #   show progression check on most recent program/stream enrolment
+  id, family, first, full_name, dob, origin, country_name = stuInfo
+  print(f"{id} {family}, {first}")
+    
+  if not progCode and not strmCode:
+    enrolmentInfo = getEnrolmentInfo(db, id)
+    print(f"  {enrolmentInfo[3]} {enrolmentInfo[2]}")
+    print(f"  {enrolmentInfo[6]} {enrolmentInfo[5]}")
+  else: 
+    print(f"  {progInfo[1]} {progInfo[2]}")
+    print(f"  {strmInfo[1]} {strmInfo[2]}")
+    
+  print()
+  print(f"Completed:")
+
+  cur = db.cursor()
+  cur.execute(query1, [id])
+  fetch = cur.fetchall()
+  cur.close()
+  
+  uocSoFar = 0
+  freeUOCUsed = 0
+  disUOCUsed = 0
+  UOCAchieved = {}
+  completedCourses = []
+  rules = []
+  r_types = ['CC', 'PE', 'GE', 'FE']
+
+  for subject in fetch:
+    sub_code, term, sub_name, mark, grade, uoc = subject
+    if mark == None:
+      mark = '-'
+    elif mark < 50:
+      uoc = 'fail'
+
+    if not progCode and not strmCode:
+      progRule = getProgRule(db, id, sub_code, UOCAchieved)
+      streamRule = getStreamRule(db, id, sub_code, UOCAchieved)
+    else: 
+      progRule = getProgRule2(db, sub_code, progInfo[1], UOCAchieved)
+      streamRule = getStreamRule2(db, strmInfo[1], progInfo[1], sub_code, UOCAchieved)
+
+    if uoc == 'fail':
+      print(f"{sub_code} {term} {sub_name:<31s} {mark:>3} {grade:3s}  fail does not count")
+    else:
+      if progRule == None and streamRule == None:
+        if not progCode and not strmCode:
+          hasFree = checkFreeElective(db, id)
+        else: 
+          hasFree = checkFreeElective2(db, strmInfo[1])
+        if re.match('^GEN.*',sub_code):
+          print(f"{sub_code} {term} {sub_name:<31s} {mark:>3} {grade:3s} {uoc:2d}uoc towards General Education")
+          if 'General Education' in UOCAchieved:
+            UOCAchieved['General Education'] += uoc
+          else:
+            UOCAchieved['General Education'] = uoc
+        elif hasFree != None and ((hasFree[2] != None and freeUOCUsed < hasFree[2]) or hasFree[2] == None):
+          print(f"{sub_code} {term} {sub_name:<31s} {mark:>3} {grade:3s} {uoc:2d}uoc towards Free Electives")
+          freeUOCUsed += uoc
+          uocSoFar += uoc
+        else:
+          if not progCode and not strmCode:
+            print(f"{sub_code} {term} {sub_name:<31s} {mark:>3} {grade:3s} {0:2d}uoc does not satisfy any rule")
+          else: 
+            print(f"{sub_code} {term} {sub_name:<31s} {mark:>3} {grade:3s} {uoc:2d}uoc towards Free Electives")
+      elif progRule != None and streamRule != None:
+        print(f"{sub_code} {term} {sub_name:<31s} {mark:>3} {grade:3s} {uoc:2d}uoc towards {streamRule[1]} + {progRule[1]}")
+        uocSoFar += uoc
+        if streamRule[1] in UOCAchieved and progRule[1] in UOCAchieved:
+          UOCAchieved[streamRule[1]] += uoc
+          UOCAchieved[progRule[1]] += uoc   
+        elif streamRule[1] in UOCAchieved and progRule[1] not in UOCAchieved:
+          UOCAchieved[streamRule[1]] += uoc
+          UOCAchieved[progRule[1]] = uoc   
+        elif streamRule[1] not in UOCAchieved and progRule[1] in UOCAchieved:
+          UOCAchieved[streamRule[1]] = uoc
+          UOCAchieved[progRule[1]] += uoc   
+        else:
+            UOCAchieved[streamRule[1]] = uoc
+            UOCAchieved[progRule[1]] = uoc  
+      elif progRule == None:
+        print(f"{sub_code} {term} {sub_name:<31s} {mark:>3} {grade:3s} {uoc:2d}uoc towards {streamRule[1]}")
+        uocSoFar += uoc
+        if streamRule[1] in UOCAchieved:
+          UOCAchieved[streamRule[1]] += uoc
+        else:
+          UOCAchieved[streamRule[1]] = uoc
+      elif streamRule == None:
+        print(f"{sub_code} {term} {sub_name:<31s} {mark:>3} {grade:3s} {uoc:2d}uoc towards {progRule[1]}")
+        uocSoFar += uoc
+        if progRule[1] in UOCAchieved: 
+          UOCAchieved[progRule[1]] += uoc
+        else:
+          UOCAchieved[progRule[1]] = uoc 
+      completedCourses.append(sub_code)       
+
+  print(f"UOC = {uocSoFar} so far")
+  print()
+  print("Remaining to complete degree:")
+  for type in r_types:
+    if not progCode and not strmCode:
+      sRules = getStreamRulesFromType(db, id, type)
+      pRules = getProgramRulesFromType(db, id, type)
+    else: 
+      sRules = getStreamRulesFromType2(db, strmInfo[1], type)
+      pRules = getProgramRulesFromType2(db, progInfo[1], type)
+      
+    if sRules:
+      for rule in sRules:
+        if rule:
+          rules.append(rule)
+          
+    if pRules:
+      for rule in pRules:
+        if rule:
+          rules.append(rule)
+        
+  for rule in rules:
+    type = rule[4]
+    if type == 'CC':
+      subjects = rule[7].split(',')
+      for subject in subjects:
+        if re.match('{.*}', subject):
+          s = subject.translate({ord(i): None for i in '{ }'})
+          s = s.split(';')
+          if s[0] not in completedCourses and s[1] not in completedCourses:
+            s1 = getSubject(db, s[0])
+            s2 = getSubject(db, s[1])
+            print(f"- {s[0]} {s1[2]}")
+            print(f"  or {s[1]} {s2[2]}")
+        else:
+          if subject not in completedCourses:
+            s = getSubject(db, subject)
+            s_id, s_code, s_short, s_long, s_uoc, s_offer, s_type, s_s = s
+            print(f"- {s_code} {s_short}")
+    else:
+      # print(rule)
+      min = rule[5]
+      max = rule[6]
+      name = rule[3]
+      if min and max and min != max: 
+        if name in UOCAchieved:
+          if UOCAchieved[name] <= min:
+            print(f"between {min - UOCAchieved[name]} and {max - UOCAchieved[name]} UOC courses from {name}")
+        else:
+          print(f"between {min} and {max} UOC courses from {name}")
+      elif min and max and min == max: 
+        if re.match('.*Free Electives', name):
+          if (freeUOCUsed < min):
+            print(f"{min - freeUOCUsed} UOC from {name}")
+        elif name in UOCAchieved:
+          if UOCAchieved[name] < min:
+            if re.match('General Education', name):
+              print(f"{min - UOCAchieved[name]} UOC of {name}")
+            else:
+              print(f"{min - UOCAchieved[name]} UOC from {name}")
+        else:
+          if re.match('General Education', name):
+            print(f"{min} UOC of {name}")
+          else:
+            print(f"{min} UOC from {name}")
+
+      elif min and not max:
+        if re.match('.*Free Electives', name):
+          if (freeUOCUsed < min):
+            print(f"at least {min - freeUOCUsed} UOC of Free Electives")
+        elif name in UOCAchieved:
+          if UOCAchieved[name] < min:
+            print(f"at least {min - UOCAchieved[name]} UOC courses from {name}")
+        else:
+          print(f"at least {min} UOC courses from {name}")
+
+except Exception as err:
+  print("DB error: ", err)
+finally:
+  if db:
+    db.close()
+
