@@ -1,6 +1,6 @@
 # Course Progress Tracker
 ## Project Description
-A project that uses *Python* to query a database using *SQL* to retrive data on a student's course progress. *SQL* was used to collect neccessary data for the type of querying the user requests and *Python* was used to colate this data, along with some logic to account for the course rules, and display the results.</br>
+A project that uses *Python* to query a database using *SQL* to retrive data on a student's course progress. *SQL* was used to collect neccessary data for the type of querying the user requests and *Python* was used to collate this data, along with some logic to account for the course rules, and display the results.</br>
 Upon starting this project, I didn't take the time to come up with a plan which cause for some road-blocks in the later stages of the project. Through this, I've learnt the importance if planning before hand and adapting to the situation afterwards.
 
 ## How to run the project
